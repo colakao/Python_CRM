@@ -24,6 +24,8 @@ class EmailCampaignApp:
         self.root.title("Email Campaign")
         self.root.geometry("1200x800")
         
+        self.gmail_mode = tk.BooleanVar(value=False)
+
         # Setup logging
         self.setup_logging()
         
@@ -43,6 +45,11 @@ class EmailCampaignApp:
         self.setup_ui()
         self.load_config()
         
+        if not self.smtp_entry.get():
+            self.smtp_entry.insert(0, "smtp.gmail.com")
+        if not self.port_entry.get():
+            self.port_entry.insert(9, "465")
+
         self.log("Application initialized", "INFO")
 
     def setup_logging(self):
@@ -103,57 +110,98 @@ class EmailCampaignApp:
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Left panel - Configuration
-        config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding="10")
+        config_frame = ttk.LabelFrame(main_frame, text="Email Campaign Configuration", padding="10")
         config_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
-        # File selection
-        ttk.Label(config_frame, text="Excel File:").grid(row=0, column=0, sticky="w")
-        self.excel_entry = ttk.Entry(config_frame, width=40)
-        self.excel_entry.grid(row=0, column=1, sticky="we")
-        ttk.Button(config_frame, text="Browse", command=self.browse_excel_file).grid(row=0, column=2)
+        # File Selection Section
+        file_frame = ttk.LabelFrame(config_frame, text="1. Select Files", padding="5")
+        file_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=5)
         
-        ttk.Label(config_frame, text="HTML Template:").grid(row=1, column=0, sticky="w")
-        self.html_entry = ttk.Entry(config_frame, width=40)
-        self.html_entry.grid(row=1, column=1, sticky="we")
-        ttk.Button(config_frame, text="Browse", command=self.browse_html_file).grid(row=1, column=2)
+        ttk.Label(file_frame, text="Excel Contacts File:").grid(row=0, column=0, sticky="w", padx=5)
+        self.excel_entry = ttk.Entry(file_frame, width=40)
+        self.excel_entry.grid(row=0, column=1, sticky="we", padx=5)
+        ttk.Button(file_frame, text="Browse", command=self.browse_excel_file).grid(row=0, column=2, padx=5)
         
-        # SMTP Settings
-        ttk.Label(config_frame, text="SMTP Server:").grid(row=2, column=0, sticky="w")
-        self.smtp_entry = ttk.Entry(config_frame)
-        self.smtp_entry.grid(row=2, column=1, sticky="we")
+        ttk.Label(file_frame, text="HTML Template:").grid(row=1, column=0, sticky="w", padx=5)
+        self.html_entry = ttk.Entry(file_frame, width=40)
+        self.html_entry.grid(row=1, column=1, sticky="we", padx=5)
+        ttk.Button(file_frame, text="Browse", command=self.browse_html_file).grid(row=1, column=2, padx=5)
         
-        ttk.Label(config_frame, text="SMTP Port:").grid(row=3, column=0, sticky="w")
-        self.port_entry = ttk.Entry(config_frame)
-        self.port_entry.grid(row=3, column=1, sticky="we")
-        
-        ttk.Label(config_frame, text="Sender Name:").grid(row=4, column=0, sticky="w")
-        self.sender_name_entry = ttk.Entry(config_frame)
-        self.sender_name_entry.grid(row=4, column=1, sticky="we")
+        # Sender Configuration Section
+        sender_frame = ttk.LabelFrame(config_frame, text="2. Sender Configuration", padding="5")
+        sender_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
 
-        # Credentials
-        ttk.Label(config_frame, text="Sender Email:").grid(row=5, column=0, sticky="w")
-        self.email_entry = ttk.Entry(config_frame)
-        self.email_entry.grid(row=5, column=1, sticky="we")
-        
-        ttk.Label(config_frame, text="Password:").grid(row=6, column=0, sticky="w")
-        self.pass_entry = ttk.Entry(config_frame, show="*")
-        self.pass_entry.grid(row=6, column=1, sticky="we")
+        sender_frame.columnconfigure(1, weight=1)
 
+        ttk.Label(sender_frame, text="Your Name:").grid(row=0, column=0, sticky="w", padx=5)
+        self.sender_name_entry = ttk.Entry(sender_frame)
+        self.sender_name_entry.grid(row=0, column=1, sticky="we", padx=5, columnspan=2)
+        
+        ttk.Label(sender_frame, text="Your Email:").grid(row=1, column=0, sticky="w", padx=5)
+        self.email_entry = ttk.Entry(sender_frame)
+        self.email_entry.grid(row=1, column=1, sticky="we", padx=5, columnspan=2)
+        
+        ttk.Label(sender_frame, text="Password:").grid(row=2, column=0, sticky="w", padx=5)
+        self.pass_entry = ttk.Entry(sender_frame, show="*")
+        self.pass_entry.grid(row=2, column=1, sticky="we", padx=5, columnspan=2)
+
+        self.app_pass_label = ttk.Label(sender_frame, text="App Passowrd:")
+        self.app_pass_entry = ttk.Entry(sender_frame, show="*")
+        
+        # SMTP Configuration Section
+        smtp_frame = ttk.LabelFrame(config_frame, text="3. Server Configuration", padding="5")
+        smtp_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=5)
+        
+        # Gmail mode toggle
+        self.gmail_mode = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            smtp_frame, 
+            text="Use Gmail", 
+            variable=self.gmail_mode,
+            command=self.toggle_gmail_mode
+        ).grid(row=0, column=0, sticky="w", padx=5)
+        
+        # Gmail help button (added here)
+        self.gmail_help_btn = ttk.Button(
+            smtp_frame,
+            text="Gmail Setup Help",
+            command=self.show_gmail_help
+        )
+        self.gmail_help_btn.grid(row=0, column=1, padx=5)
+        self.gmail_help_btn.grid_remove()  # Initially hidden
+        
+        # Server settings
+        ttk.Label(smtp_frame, text="SMTP Server:").grid(row=1, column=0, sticky="w", padx=5)
+        self.smtp_entry = ttk.Entry(smtp_frame)
+        self.smtp_entry.grid(row=1, column=1, sticky="we", padx=5, columnspan=2)
+        
+        ttk.Label(smtp_frame, text="SMTP Port:").grid(row=2, column=0, sticky="w", padx=5)
+        self.port_entry = ttk.Entry(smtp_frame, width=8)
+        self.port_entry.grid(row=2, column=1, sticky="w", padx=5)
+        
+        # Options Section
+        options_frame = ttk.LabelFrame(config_frame, text="4. Campaign Options", padding="5")
+        options_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=5)
+        
         self.remember_me = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            config_frame, 
+            options_frame, 
             text="Remember my credentials", 
             variable=self.remember_me
-        ).grid(row=7, column=0, columnspan=3, sticky="w")
+        ).grid(row=0, column=0, sticky="w", padx=5)
         
-        # Test mode toggle
         self.test_mode = tk.BooleanVar(value=False)
-        ttk.Checkbutton(config_frame, text="Test Mode (send to yourself)", variable=self.test_mode).grid(row=8, column=0, columnspan=3, sticky="w")
+        ttk.Checkbutton(
+            options_frame, 
+            text="Test Mode (send to yourself)", 
+            variable=self.test_mode
+        ).grid(row=0, column=1, sticky="w", padx=5)
         
-        # Buttons
+        # Action Buttons
         button_frame = ttk.Frame(config_frame)
-        button_frame.grid(row=9, column=0, columnspan=3, pady=10)
-        ttk.Button(button_frame, text="Load Data", command=self.load_data).pack(side=tk.LEFT, padx=5)
+        button_frame.grid(row=4, column=0, columnspan=2, pady=10)
+        
+        ttk.Button(button_frame, text="Load Contacts", command=self.load_data).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Preview Email", command=self.preview_email).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Send Campaign", command=self.start_campaign).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Import Failed", command=self.import_failed_contacts).pack(side=tk.LEFT, padx=5)
@@ -164,7 +212,7 @@ class EmailCampaignApp:
         
         # Data Table Tab
         table_frame = ttk.Frame(notebook)
-        notebook.add(table_frame, text="Contacts")
+        notebook.add(table_frame, text="Contact List")
         
         self.tree = ttk.Treeview(table_frame)
         self.tree.pack(fill=tk.BOTH, expand=True)
@@ -178,7 +226,7 @@ class EmailCampaignApp:
         
         # Log Tab
         log_frame = ttk.Frame(notebook)
-        notebook.add(log_frame, text="Log")
+        notebook.add(log_frame, text="Activity Log")
         
         self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD)
         self.log_text.pack(fill=tk.BOTH, expand=True)
@@ -192,6 +240,47 @@ class EmailCampaignApp:
         main_frame.columnconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=3)
         main_frame.rowconfigure(0, weight=1)
+        config_frame.columnconfigure(1, weight=1)
+
+    def toggle_gmail_mode(self):
+        if self.gmail_mode.get():
+            # Show App Password field, hide regular password
+            self.app_pass_label.grid(row=3, column=0, sticky="w", padx=5)
+            self.app_pass_entry.grid(row=3, column=1, sticky="we", padx=5, columnspan=2)
+            self.pass_entry.grid_remove()
+            
+            # Set Gmail defaults
+            self.smtp_entry.delete(0, tk.END)
+            self.smtp_entry.insert(0, "smtp.gmail.com")
+            self.port_entry.delete(0, tk.END)
+            self.port_entry.insert(0, "465")
+        else:
+            # Show regular password, hide App Password
+            self.pass_entry.grid()
+            self.app_pass_label.grid_remove()
+            self.app_pass_entry.grid_remove()
+
+    def show_gmail_help(self):
+        """Show Gmail configuration help"""
+        help_msg = """Gmail Configuration Requirements:
+
+1. For Gmail accounts WITH 2FA:
+   - Create an App Password:
+     Google Account > Security > App Passwords
+   - Use this password in the app
+
+2. For Gmail accounts WITHOUT 2FA:
+   - Enable "Less Secure Apps":
+     https://myaccount.google.com/lesssecureapps
+
+3. You may need to unlock captcha:
+   - Visit before sending:
+     https://accounts.google.com/DisplayUnlockCaptcha
+
+4. Sending Limits:
+   - 500 emails per day
+   - 100 recipients per message"""
+        messagebox.showinfo("Gmail Setup Help", help_msg)
 
     def browse_excel_file(self):
         """Browse for Excel file"""
@@ -380,11 +469,11 @@ class EmailCampaignApp:
             
             # Send email with detailed error handling
             try:
-                result, error_detail = send_email(
+                result, error_detail = self.send_email(
                     self.config['sender_email'], self.config['sender_name'],
                     recipient, contact['Nombre Contacto'],
                     subject, html_template,
-                    self.config['smtp_server'], self.config['smtp_port'], self.config['password']
+                    self.config['smtp_server'], int(self.config['smtp_port'])
                 )
                 
                 if result:
@@ -482,11 +571,13 @@ class EmailCampaignApp:
                 return
                 
             config_data = {
-                "email": email,
-                "password": password,
-                "sender_name": sender_name,
-                "smtp_server": smtp_server,
-                "smtp_port": smtp_port
+                "email": self.email_entry.get(),
+                "password": self.pass_entry.get(),  # Regular password
+                "app_password": self.app_pass_entry.get() if self.gmail_mode.get() else "",
+                "sender_name": self.sender_name_entry.get(),
+                "smtp_server": self.smtp_entry.get(),
+                "smtp_port": self.port_entry.get(),
+                "is_gmail": self.gmail_mode.get()
             }
             
             encoded = self._encode_config(config_data)
@@ -513,24 +604,39 @@ class EmailCampaignApp:
                     self.log("Config file is empty", "WARNING")
                     return
                     
-                config_data = self._decode_config(encoded)
-                
-                # Auto-fill UI fields
+            config_data = self._decode_config(encoded)
+            
+            # Only populate fields if they're empty
+            if not self.email_entry.get():
                 self.email_entry.delete(0, tk.END)
                 self.email_entry.insert(0, config_data.get("email", ""))
+            if not self.pass_entry.get():
                 self.pass_entry.delete(0, tk.END)
                 self.pass_entry.insert(0, config_data.get("password", ""))
+            if config_data.get("is_gmail", False):
+                self.gmail_mode.set(True)
+                self.toggle_gmail_mode()
+                self.app_pass_entry.insert(0, config_data.get("app_password", ""))
+            if not self.smtp_entry.get():
                 self.smtp_entry.delete(0, tk.END)
                 self.smtp_entry.insert(0, config_data.get("smtp_server", ""))
+            if not self.port_entry.get():
                 self.port_entry.delete(0, tk.END)
-                self.port_entry.insert(0, str(config_data.get("smtp_port", "")))
+                port = config_data.get("smtp_port", "465")
+                self.port_entry.insert(0, str(port) if port else "465")
+            if not self.sender_name_entry.get():
                 self.sender_name_entry.delete(0, tk.END)
                 self.sender_name_entry.insert(0, config_data.get("sender_name", ""))
                 
             self.log("Successfully loaded config", "INFO")
         except Exception as e:
             self.log(f"Error loading config: {str(e)}", "ERROR")
-            messagebox.showwarning("Config Error", f"Could not load saved config:\n{str(e)}")
+            # Show error but keep fields editable
+            self.email_entry.config(state="normal")
+            self.pass_entry.config(state="normal")
+            self.smtp_entry.config(state="normal")
+            self.port_entry.config(state="normal")
+            self.sender_name_entry.config(state="normal")
 
     def import_failed_contacts(self):
         """Import failed contacts from MBOX bounce messages"""
@@ -654,7 +760,56 @@ class EmailCampaignApp:
             df.to_excel(filename, index=False)
             messagebox.showinfo("Success", f"Saved {len(rejected_emails)} addresses to {filename}")
 
+    def send_email(self, sender_email, sender_name, recipient_email, 
+                recipient_name, subject, html_content, 
+                smtp_server, smtp_port):
+        """Universal email sender that handles both Gmail and regular SMTP"""
+        
+        password = self.app_pass_entry.get() if self.gmail_mode.get() else self.pass_entry.get()
+        
+        try:
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = formataddr((sender_name, sender_email))
+            msg['To'] = recipient_email
+            msg.attach(MIMEText(html_content, 'html'))
+
+            context = ssl.create_default_context()
+                
+            # Gmail mode handling
+            if self.gmail_mode.get():
+                if smtp_port == 465:
+                    with smtplib.SMTP_SSL(smtp_server, smtp_port, context=context) as server:
+                        server.login(sender_email, password)
+                        server.send_message(msg)
+                elif smtp_port == 587:
+                    with smtplib.SMTP(smtp_server, smtp_port) as server:
+                        server.starttls(context=context)
+                        server.login(sender_email, password)
+                        server.send_message(msg)
+                else:
+                    return False, "Gmail requires port 465 (SSL) or 587 (TLS)"            
+            # Regular SMTP handling
+            else:
+                with smtplib.SMTP_SSL(smtp_server, smtp_port, context=context) as server:
+                    server.login(sender_email, password)
+                    server.send_message(msg)            
+            return True, None
+                
+        except smtplib.SMTPAuthenticationError as e:
+            if self.gmail_mode.get():
+                return False, ("Gmail authentication failed. Possible causes:\n"
+                            "1. Need App Password (if 2FA enabled)\n"
+                            "2. 'Less secure apps' not enabled\n"
+                            "3. Unlock captcha required\n"
+                            f"Technical details: {str(e)}")
+            else:
+                return False, f"SMTP Authentication Failed: {str(e)}"
+        except Exception as e:
+            return False, f"Error: {str(e)}"
+        
 def load_contacts(file_path):
+
     """Load and validate contacts with logging"""
     try:
         df = pd.read_excel(file_path)
@@ -670,37 +825,7 @@ def load_contacts(file_path):
         logging.error(f"Error loading contacts: {str(e)}")
         raise
 
-def send_email(sender_email, sender_name, recipient_email, recipient_name, 
-               subject, html_content, smtp_server, smtp_port, password):
-    """Send email with detailed error reporting"""
-    try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = formataddr((sender_name, sender_email))
-        msg['To'] = recipient_email
-        msg.attach(MIMEText(html_content, 'html'))
 
-        context = ssl.create_default_context()
-        
-        # SMTP connection with timeout
-        with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=10, context=context) as server:
-            server.login(sender_email, password)
-            server.send_message(msg)
-        
-        return True, None
-        
-    except smtplib.SMTPAuthenticationError as e:
-        return False, f"SMTP Authentication Failed: {e.smtp_error.decode()}"
-    except smtplib.SMTPConnectError as e:
-        return False, f"SMTP Connection Failed: {e.smtp_error.decode()}"
-    except smtplib.SMTPSenderRefused as e:
-        return False, f"Sender address rejected: {e.smtp_error.decode()}"
-    except smtplib.SMTPRecipientsRefused as e:
-        return False, f"Recipient address rejected: {e.recipients}"
-    except smtplib.SMTPException as e:
-        return False, f"SMTP Error: {str(e)}"
-    except Exception as e:
-        return False, f"Unexpected Error: {str(e)}"
 
 
 if __name__ == "__main__":

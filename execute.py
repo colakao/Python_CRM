@@ -113,17 +113,23 @@ class EmailCampaignApp:
         config_frame = ttk.LabelFrame(main_frame, text="Email Campaign Configuration", padding="10")
         config_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
+        # Configure grid weights for config_frame
+        config_frame.columnconfigure(1, weight=1)  # Make the middle column expandable
+        
         # File Selection Section
         file_frame = ttk.LabelFrame(config_frame, text="1. Select Files", padding="5")
         file_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=5)
         
+        # Configure grid weights for file_frame
+        file_frame.columnconfigure(1, weight=1)  # Make entry fields expandable
+        
         ttk.Label(file_frame, text="Excel Contacts File:").grid(row=0, column=0, sticky="w", padx=5)
-        self.excel_entry = ttk.Entry(file_frame, width=40)
+        self.excel_entry = ttk.Entry(file_frame)
         self.excel_entry.grid(row=0, column=1, sticky="we", padx=5)
         ttk.Button(file_frame, text="Browse", command=self.browse_excel_file).grid(row=0, column=2, padx=5)
         
         ttk.Label(file_frame, text="HTML Template:").grid(row=1, column=0, sticky="w", padx=5)
-        self.html_entry = ttk.Entry(file_frame, width=40)
+        self.html_entry = ttk.Entry(file_frame)
         self.html_entry.grid(row=1, column=1, sticky="we", padx=5)
         ttk.Button(file_frame, text="Browse", command=self.browse_html_file).grid(row=1, column=2, padx=5)
         
@@ -283,26 +289,28 @@ class EmailCampaignApp:
         messagebox.showinfo("Gmail Setup Help", help_msg)
 
     def browse_excel_file(self):
-        """Browse for Excel file"""
+        """Browse for Excel file and store absolute path"""
         filename = filedialog.askopenfilename(
             title="Select Excel File",
             filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
         )
         if filename:
+            abs_path = os.path.abspath(filename)
             self.excel_entry.delete(0, tk.END)
-            self.excel_entry.insert(0, filename)
-            self.log(f"Selected Excel file: {filename}", "INFO")
+            self.excel_entry.insert(0, self._get_relative_path(abs_path))
+            self.log(f"Selected Excel file: {abs_path}", "INFO")
 
     def browse_html_file(self):
-        """Browse for HTML template"""
+        """Browse for HTML template and store absolute path"""
         filename = filedialog.askopenfilename(
             title="Select HTML Template",
             filetypes=[("HTML files", "*.html"), ("All files", "*.*")]
         )
         if filename:
+            abs_path = os.path.abspath(filename)
             self.html_entry.delete(0, tk.END)
-            self.html_entry.insert(0, filename)
-            self.log(f"Selected HTML template: {filename}", "INFO")
+            self.html_entry.insert(0, self._get_relative_path(abs_path))
+            self.log(f"Selected HTML template: {abs_path}", "INFO")
 
     def load_data(self):
         """Load and display contact data from Excel"""
@@ -562,8 +570,26 @@ class EmailCampaignApp:
         except Exception as e:
             raise ValueError(f"Decoding failed: {str(e)}")
             
+    def _get_relative_path(self, path):
+        """Convert absolute path to relative if it's under current directory"""
+        if not path:
+            return ""
+        try:
+            rel_path = os.path.relpath(path)
+            return rel_path if len(rel_path) < len(path) else path
+        except ValueError:
+            return path
+
+    def _get_absolute_path(self, path):
+        """Convert path to absolute, handling both relative and absolute paths"""
+        if not path:
+            return ""
+        if os.path.isabs(path):
+            return path
+        return os.path.abspath(path)
+
     def save_config(self, email: str, password: str, sender_name: str, smtp_server: str, smtp_port: int):
-        """Save encrypted config to file"""
+        """Save encrypted config to file including last used paths"""
         config_file = ".creds"
         try:
             if not email or not password:
@@ -572,12 +598,14 @@ class EmailCampaignApp:
                 
             config_data = {
                 "email": self.email_entry.get(),
-                "password": self.pass_entry.get(),  # Regular password
+                "password": self.pass_entry.get(),
                 "app_password": self.app_pass_entry.get() if self.gmail_mode.get() else "",
                 "sender_name": self.sender_name_entry.get(),
                 "smtp_server": self.smtp_entry.get(),
                 "smtp_port": self.port_entry.get(),
-                "is_gmail": self.gmail_mode.get()
+                "is_gmail": self.gmail_mode.get(),
+                "last_excel": self._get_absolute_path(self.excel_entry.get()),
+                "last_html": self._get_absolute_path(self.html_entry.get())
             }
             
             encoded = self._encode_config(config_data)
@@ -591,7 +619,7 @@ class EmailCampaignApp:
             messagebox.showerror("Save Error", f"Could not save config:\n{str(e)}")
 
     def load_config(self):
-        """Load and decode config automatically at startup"""
+        """Load and decode config including last used files"""
         config_file = ".creds"
         try:
             if not os.path.exists(config_file):
@@ -628,15 +656,22 @@ class EmailCampaignApp:
                 self.sender_name_entry.delete(0, tk.END)
                 self.sender_name_entry.insert(0, config_data.get("sender_name", ""))
                 
+            # Load last used files (show relative paths)
+            if "last_excel" in config_data:
+                abs_path = config_data["last_excel"]
+                if os.path.exists(abs_path):
+                    self.excel_entry.delete(0, tk.END)
+                    self.excel_entry.insert(0, self._get_relative_path(abs_path))
+                    
+            if "last_html" in config_data:
+                abs_path = config_data["last_html"]
+                if os.path.exists(abs_path):
+                    self.html_entry.delete(0, tk.END)
+                    self.html_entry.insert(0, self._get_relative_path(abs_path))
+                    
             self.log("Successfully loaded config", "INFO")
         except Exception as e:
             self.log(f"Error loading config: {str(e)}", "ERROR")
-            # Show error but keep fields editable
-            self.email_entry.config(state="normal")
-            self.pass_entry.config(state="normal")
-            self.smtp_entry.config(state="normal")
-            self.port_entry.config(state="normal")
-            self.sender_name_entry.config(state="normal")
 
     def import_failed_contacts(self):
         """Import failed contacts from MBOX bounce messages"""

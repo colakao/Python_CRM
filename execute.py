@@ -1,0 +1,709 @@
+import pandas as pd
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formataddr
+import getpass
+import time
+import ssl
+from datetime import datetime
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext, filedialog
+import logging
+from logging.handlers import RotatingFileHandler
+import traceback
+import os
+import base64
+import json
+import mailbox
+import re
+
+class EmailCampaignApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Email Campaign")
+        self.root.geometry("1200x800")
+        
+        # Setup logging
+        self.setup_logging()
+        
+        # Configuration
+        self.config = {
+            'excel_file': "",
+            'html_template': "",
+            'test_mode': False,
+            'log_file': "logs/email_campaign.log",
+            'failure_report': "reports/failed_contacts.xlsx"
+        }
+        
+        # Tracking failed sends
+        self.failed_contacts = []
+        
+        # UI Setup
+        self.setup_ui()
+        self.load_config()
+        
+        self.log("Application initialized", "INFO")
+
+    def setup_logging(self):
+        """Configure logging to file and console"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                RotatingFileHandler(
+                    "email_campaign.log",
+                    maxBytes=5*1024*1024,  # 5MB
+                    backupCount=3
+                ),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger()
+
+    def log(self, message, level="INFO"):
+        """Log message with level and update UI log"""
+        level = level.upper()
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        log_entry = f"[{timestamp}] {level}: {message}"
+        
+        # Log to file/console
+        if level == "INFO":
+            self.logger.info(message)
+        elif level == "WARNING":
+            self.logger.warning(message)
+        elif level == "ERROR":
+            self.logger.error(message)
+        elif level == "DEBUG":
+            self.logger.debug(message)
+        
+        # Update UI log if available
+        if hasattr(self, 'log_text'):
+            self.log_text.config(state=tk.NORMAL)
+            self.log_text.insert(tk.END, log_entry + "\n")
+            
+            # Color coding
+            if level == "ERROR":
+                self.log_text.tag_add("error", "end-2l linestart", "end-1c")
+                self.log_text.tag_config("error", foreground="red")
+            elif level == "WARNING":
+                self.log_text.tag_add("warning", "end-2l linestart", "end-1c")
+                self.log_text.tag_config("warning", foreground="orange")
+            
+            self.log_text.see(tk.END)
+            self.log_text.config(state=tk.DISABLED)
+        
+        # Update status bar for errors
+        if level == "ERROR" and hasattr(self, 'status'):
+            self.status.config(text=f"Error: {message[:60]}...")
+    
+    def setup_ui(self):
+        # Main container
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Left panel - Configuration
+        config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding="10")
+        config_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        # File selection
+        ttk.Label(config_frame, text="Excel File:").grid(row=0, column=0, sticky="w")
+        self.excel_entry = ttk.Entry(config_frame, width=40)
+        self.excel_entry.grid(row=0, column=1, sticky="we")
+        ttk.Button(config_frame, text="Browse", command=self.browse_excel_file).grid(row=0, column=2)
+        
+        ttk.Label(config_frame, text="HTML Template:").grid(row=1, column=0, sticky="w")
+        self.html_entry = ttk.Entry(config_frame, width=40)
+        self.html_entry.grid(row=1, column=1, sticky="we")
+        ttk.Button(config_frame, text="Browse", command=self.browse_html_file).grid(row=1, column=2)
+        
+        # SMTP Settings
+        ttk.Label(config_frame, text="SMTP Server:").grid(row=2, column=0, sticky="w")
+        self.smtp_entry = ttk.Entry(config_frame)
+        self.smtp_entry.grid(row=2, column=1, sticky="we")
+        
+        ttk.Label(config_frame, text="SMTP Port:").grid(row=3, column=0, sticky="w")
+        self.port_entry = ttk.Entry(config_frame)
+        self.port_entry.grid(row=3, column=1, sticky="we")
+        
+        ttk.Label(config_frame, text="Sender Name:").grid(row=4, column=0, sticky="w")
+        self.sender_name_entry = ttk.Entry(config_frame)
+        self.sender_name_entry.grid(row=4, column=1, sticky="we")
+
+        # Credentials
+        ttk.Label(config_frame, text="Sender Email:").grid(row=5, column=0, sticky="w")
+        self.email_entry = ttk.Entry(config_frame)
+        self.email_entry.grid(row=5, column=1, sticky="we")
+        
+        ttk.Label(config_frame, text="Password:").grid(row=6, column=0, sticky="w")
+        self.pass_entry = ttk.Entry(config_frame, show="*")
+        self.pass_entry.grid(row=6, column=1, sticky="we")
+
+        self.remember_me = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            config_frame, 
+            text="Remember my credentials", 
+            variable=self.remember_me
+        ).grid(row=7, column=0, columnspan=3, sticky="w")
+        
+        # Test mode toggle
+        self.test_mode = tk.BooleanVar(value=False)
+        ttk.Checkbutton(config_frame, text="Test Mode (send to yourself)", variable=self.test_mode).grid(row=8, column=0, columnspan=3, sticky="w")
+        
+        # Buttons
+        button_frame = ttk.Frame(config_frame)
+        button_frame.grid(row=9, column=0, columnspan=3, pady=10)
+        ttk.Button(button_frame, text="Load Data", command=self.load_data).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Preview Email", command=self.preview_email).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Send Campaign", command=self.start_campaign).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Import Failed", command=self.import_failed_contacts).pack(side=tk.LEFT, padx=5)
+        
+        # Right panel - Data Table and Log
+        notebook = ttk.Notebook(main_frame)
+        notebook.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+        
+        # Data Table Tab
+        table_frame = ttk.Frame(notebook)
+        notebook.add(table_frame, text="Contacts")
+        
+        self.tree = ttk.Treeview(table_frame)
+        self.tree.pack(fill=tk.BOTH, expand=True)
+        
+        # Scrollbars
+        ysb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        xsb = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscroll=ysb.set, xscroll=xsb.set)
+        ysb.pack(side=tk.RIGHT, fill=tk.Y)
+        xsb.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Log Tab
+        log_frame = ttk.Frame(notebook)
+        notebook.add(log_frame, text="Log")
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log_text.config(state=tk.DISABLED)
+        
+        # Status bar
+        self.status = ttk.Label(main_frame, text="Ready", relief=tk.SUNKEN)
+        self.status.grid(row=1, column=0, columnspan=2, sticky="ew")
+        
+        # Configure grid weights
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=3)
+        main_frame.rowconfigure(0, weight=1)
+
+    def browse_excel_file(self):
+        """Browse for Excel file"""
+        filename = filedialog.askopenfilename(
+            title="Select Excel File",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+        )
+        if filename:
+            self.excel_entry.delete(0, tk.END)
+            self.excel_entry.insert(0, filename)
+            self.log(f"Selected Excel file: {filename}", "INFO")
+
+    def browse_html_file(self):
+        """Browse for HTML template"""
+        filename = filedialog.askopenfilename(
+            title="Select HTML Template",
+            filetypes=[("HTML files", "*.html"), ("All files", "*.*")]
+        )
+        if filename:
+            self.html_entry.delete(0, tk.END)
+            self.html_entry.insert(0, filename)
+            self.log(f"Selected HTML template: {filename}", "INFO")
+
+    def load_data(self):
+        """Load and display contact data from Excel"""
+        excel_file = self.excel_entry.get()
+        if not excel_file:
+            error_msg = "Please select an Excel file first"
+            self.log(error_msg, "ERROR")
+            messagebox.showerror("Error", error_msg)
+            return
+            
+        try:
+            self.log(f"Loading contacts from {excel_file}", "INFO")
+            self.df = pd.read_excel(excel_file)
+            self.display_data()
+            self.status.config(text=f"Loaded {len(self.df)} contacts")
+            self.log(f"Successfully loaded {len(self.df)} contacts", "INFO")
+        except Exception as e:
+            error_msg = f"Failed to load Excel file: {str(e)}"
+            self.log(error_msg, "ERROR")
+            self.log(traceback.format_exc(), "DEBUG")
+            messagebox.showerror("Error", error_msg)
+
+    def display_data(self):
+        """Display data in treeview"""
+        # Clear existing data
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+            
+        # Set up columns
+        self.tree["columns"] = list(self.df.columns)
+        self.tree["show"] = "headings"
+        
+        for col in self.df.columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=100, anchor=tk.W)
+        
+        # Add data
+        for _, row in self.df.iterrows():
+            self.tree.insert("", tk.END, values=list(row))
+        
+        self.log("Contact data displayed in table", "INFO")
+
+    def preview_email(self):
+        """Show formatted email preview"""
+        html_file = self.html_entry.get()
+        if not html_file:
+            error_msg = "Please select an HTML template first"
+            self.log(error_msg, "ERROR")
+            messagebox.showerror("Error", error_msg)
+            return
+        
+        try:
+            with open(html_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+        
+            preview = tk.Toplevel(self.root)
+            preview.title("Email Preview")
+            preview.geometry("800x600")
+            
+            # Simple text preview since tkinterhtml isn't available
+            text_widget = scrolledtext.ScrolledText(preview, wrap=tk.WORD)
+            text_widget.pack(fill=tk.BOTH, expand=True)
+            text_widget.insert(tk.END, content)
+            text_widget.config(state=tk.DISABLED)
+        
+            self.log("Email preview displayed", "INFO")
+        except Exception as e:
+            error_msg = f"Failed to load HTML template: {str(e)}"
+            self.log(error_msg, "ERROR")
+            self.log(traceback.format_exc(), "DEBUG")
+            messagebox.showerror("Error", error_msg)
+
+    def start_campaign(self):
+        """Start email campaign with failure tracking"""
+        self.failed_contacts = []  # Reset failed contacts list
+        self.log("Starting email campaign", "INFO")
+        
+        # Validate inputs
+        if not all([self.excel_entry.get(), self.html_entry.get(),
+                   self.email_entry.get(), self.pass_entry.get()]):
+            error_msg = "Please fill all required fields"
+            self.log(error_msg, "ERROR")
+            messagebox.showerror("Error", error_msg)
+            return
+        
+        # Save config if "Remember Me" is checked
+        if self.remember_me.get():
+            self.save_config(
+                email=self.email_entry.get(),
+                password=self.pass_entry.get(),
+                sender_name=self.sender_name_entry.get(),
+                smtp_server=self.smtp_entry.get(),
+                smtp_port=int(self.port_entry.get())
+            )
+
+        # Confirm before sending
+        if not messagebox.askyesno("Confirm", "Start email campaign?"):
+            self.log("Campaign canceled by user", "INFO")
+            return
+            
+        # Get configuration
+        self.config.update({
+            'excel_file': self.excel_entry.get(),
+            'html_template': self.html_entry.get(),
+            'smtp_server': self.smtp_entry.get(),
+            'smtp_port': int(self.port_entry.get()),
+            'test_mode': self.test_mode.get(),
+            'sender_email': self.email_entry.get(),
+            'password': self.pass_entry.get(),
+            'sender_name': self.sender_name_entry.get()
+        })
+        
+        # Load data
+        try:
+            self.log(f"Loading contacts from {self.config['excel_file']}", "INFO")
+            contacts = load_contacts(self.config['excel_file'])
+            self.log(f"Found {len(contacts)} valid contacts", "INFO")
+            
+            self.log(f"Loading HTML template from {self.config['html_template']}", "INFO")
+            with open(self.config['html_template'], 'r', encoding='utf-8') as f:
+                html_template = f.read()
+        except Exception as e:
+            error_msg = f"Failed to load files: {str(e)}"
+            self.log(error_msg, "ERROR")
+            self.log(traceback.format_exc(), "DEBUG")
+            messagebox.showerror("Error", error_msg)
+            return
+            
+        # Start sending
+        success_count = 0
+        total = len(contacts)
+        self.log(f"Starting to send {total} emails", "INFO")
+        
+        progress = tk.Toplevel(self.root)
+        progress.title("Sending Progress")
+        progress.geometry("600x400")
+        
+        ttk.Label(progress, text="Sending emails...").pack(pady=10)
+        progress_bar = ttk.Progressbar(progress, maximum=total, mode='determinate')
+        progress_bar.pack(fill=tk.X, padx=20, pady=10)
+        status_label = ttk.Label(progress, text="0/0 sent")
+        status_label.pack()
+        
+        log_frame = ttk.LabelFrame(progress, text="Sending Log", padding="10")
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        progress_log = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD)
+        progress_log.pack(fill=tk.BOTH, expand=True)
+        
+        for i, contact in enumerate(contacts, 1):
+            # Update UI
+            progress_bar['value'] = i
+            status_label.config(text=f"{i}/{total} sent")
+            progress.update()
+            
+            # Prepare email
+            company = contact.get('Nombre Empresa', '')
+            subject = f"{self.config['sender_name']} - Servicios que entregan valor"
+            recipient = self.config['sender_email'] if self.config['test_mode'] else contact['Email Contacto']
+            
+            log_msg = f"Sending to {recipient} ({contact['Nombre Contacto']} at {company})"
+            self.log(log_msg, "INFO")
+            progress_log.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] {log_msg}\n")
+            progress_log.see(tk.END)
+            
+            # Send email with detailed error handling
+            try:
+                result, error_detail = send_email(
+                    self.config['sender_email'], self.config['sender_name'],
+                    recipient, contact['Nombre Contacto'],
+                    subject, html_template,
+                    self.config['smtp_server'], self.config['smtp_port'], self.config['password']
+                )
+                
+                if result:
+                    success_msg = f"Successfully sent to {recipient}"
+                    success_count += 1
+                    self.log(success_msg, "INFO")
+                    progress_log.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] {success_msg}\n")
+                else:
+                    error_msg = f"Failed to send to {recipient}: {error_detail}"
+                    self.log(error_msg, "ERROR")
+                    progress_log.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: {error_msg}\n", "error")
+                    
+                    # Add to failed contacts list
+                    failed_contact = contact.copy()
+                    failed_contact['Error'] = error_detail
+                    failed_contact['Timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    self.failed_contacts.append(failed_contact)
+                    
+            except Exception as e:
+                error_msg = f"Unexpected error sending to {recipient}: {str(e)}"
+                self.log(error_msg, "ERROR")
+                self.log(traceback.format_exc(), "DEBUG")
+                progress_log.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL: {error_msg}\n", "error")
+                
+                # Add to failed contacts list
+                failed_contact = contact.copy()
+                failed_contact['Error'] = str(e)
+                failed_contact['Timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.failed_contacts.append(failed_contact)
+            
+            progress_log.see(tk.END)
+            progress.update()
+            
+            # Delay between emails
+            time.sleep(3)
+        
+        # Save failure report if needed
+        if self.failed_contacts:
+            self.save_failure_report()
+        
+        # Show results
+        progress.destroy()
+        final_msg = f"Campaign finished - {success_count} succeeded, {total - success_count} failed"
+        if self.failed_contacts:
+            final_msg += f"\nFailure report saved to: {self.config['failure_report']}"
+        self.log(final_msg, "INFO")
+        messagebox.showinfo("Complete", final_msg)
+
+    def save_failure_report(self):
+        """Save failed contacts to Excel file with error details"""
+        try:
+            df_failed = pd.DataFrame(self.failed_contacts)
+            
+            # Ensure all original columns are included, even if empty
+            original_df = pd.read_excel(self.config['excel_file'])
+            for col in original_df.columns:
+                if col not in df_failed.columns:
+                    df_failed[col] = ""
+            
+            # Reorder columns to match original + error info
+            cols = list(original_df.columns) + ['Error', 'Timestamp']
+            df_failed = df_failed[cols]
+            
+            # Save to Excel
+            df_failed.to_excel(self.config['failure_report'], index=False)
+            self.log(f"Saved failure report with {len(df_failed)} contacts to {self.config['failure_report']}", "INFO")
+        except Exception as e:
+            error_msg = f"Failed to save failure report: {str(e)}"
+            self.log(error_msg, "ERROR")
+            self.log(traceback.format_exc(), "DEBUG")
+
+    def _encode_config(self, data_dict: dict) -> str:
+        """Obfuscate config data with base64"""
+        if not data_dict:
+            raise ValueError("Config data cannot be empty")
+        json_str = json.dumps(data_dict)
+        return base64.b64encode(json_str.encode()).decode()
+    
+    def _decode_config(self, encoded_str: str) -> dict:
+        """Decode base64-obfuscated config"""
+        if not encoded_str:
+            raise ValueError("Encoded string cannot be empty")
+        try:
+            decoded = base64.b64decode(encoded_str.encode()).decode()
+            return json.loads(decoded)
+        except Exception as e:
+            raise ValueError(f"Decoding failed: {str(e)}")
+            
+    def save_config(self, email: str, password: str, sender_name: str, smtp_server: str, smtp_port: int):
+        """Save encrypted config to file"""
+        config_file = ".creds"
+        try:
+            if not email or not password:
+                self.log("Empty credentials provided, not saving", "WARNING")
+                return
+                
+            config_data = {
+                "email": email,
+                "password": password,
+                "sender_name": sender_name,
+                "smtp_server": smtp_server,
+                "smtp_port": smtp_port
+            }
+            
+            encoded = self._encode_config(config_data)
+            with open(config_file, "w") as f:
+                f.write(encoded)
+            if os.name != 'nt':
+                os.chmod(config_file, 0o600)
+            self.log("Config saved securely", "INFO")
+        except Exception as e:
+            self.log(f"Error saving config: {str(e)}", "ERROR")
+            messagebox.showerror("Save Error", f"Could not save config:\n{str(e)}")
+
+    def load_config(self):
+        """Load and decode config automatically at startup"""
+        config_file = ".creds"
+        try:
+            if not os.path.exists(config_file):
+                self.log("No config file found (first run?)", "INFO")
+                return
+                
+            with open(config_file, "r") as f:
+                encoded = f.read().strip()
+                if not encoded:
+                    self.log("Config file is empty", "WARNING")
+                    return
+                    
+                config_data = self._decode_config(encoded)
+                
+                # Auto-fill UI fields
+                self.email_entry.delete(0, tk.END)
+                self.email_entry.insert(0, config_data.get("email", ""))
+                self.pass_entry.delete(0, tk.END)
+                self.pass_entry.insert(0, config_data.get("password", ""))
+                self.smtp_entry.delete(0, tk.END)
+                self.smtp_entry.insert(0, config_data.get("smtp_server", ""))
+                self.port_entry.delete(0, tk.END)
+                self.port_entry.insert(0, str(config_data.get("smtp_port", "")))
+                self.sender_name_entry.delete(0, tk.END)
+                self.sender_name_entry.insert(0, config_data.get("sender_name", ""))
+                
+            self.log("Successfully loaded config", "INFO")
+        except Exception as e:
+            self.log(f"Error loading config: {str(e)}", "ERROR")
+            messagebox.showwarning("Config Error", f"Could not load saved config:\n{str(e)}")
+
+    def import_failed_contacts(self):
+        """Import failed contacts from MBOX bounce messages"""
+        try:
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Import Failed Contacts from MBOX")
+            dialog.geometry("800x600")
+            
+            ttk.Label(dialog, text="Select MBOX file containing bounce messages:").pack(pady=10)
+            
+            def browse_mbox():
+                filepath = filedialog.askopenfilename(
+                    title="Select MBOX File",
+                    filetypes=[("MBOX files", "*.mbox"), ("All files", "*.*")]
+                )
+                if filepath:
+                    process_mbox_file(filepath)
+            
+            def process_mbox_file(filepath):
+                try:
+                    rejected_emails = set()
+                    
+                    # Open the mbox file
+                    mbox = mailbox.mbox(filepath)
+                    
+                    self.log(f"Processing {len(mbox)} messages from MBOX", "INFO")
+                    
+                    for message in mbox:
+                        text_content = self._extract_text_content(message)
+                        found = self._parse_bounce_content(text_content)
+                        rejected_emails.update(found)
+                    
+                    self._display_results(rejected_emails, dialog)
+                    
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to process MBOX file: {str(e)}")
+                    self.log(f"MBOX processing error: {str(e)}", "ERROR")
+            
+            ttk.Button(dialog, text="Browse MBOX File", command=browse_mbox).pack(pady=10)
+            
+            # Result display area
+            self.result_text = scrolledtext.ScrolledText(dialog, height=20)
+            self.result_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            self.result_text.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to initialize: {str(e)}")
+
+    def _extract_text_content(self, msg):
+        """Extract text content from email message"""
+        text_content = ""
+        try:
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() == "text/plain":
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            text_content += payload.decode(errors="ignore") + "\n"
+            else:
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    text_content = payload.decode(errors="ignore")
+        except Exception as e:
+            self.log(f"Error extracting content: {str(e)}", "WARNING")
+        return text_content
+
+    def _parse_bounce_content(self, text_content):
+        """Parse bounce message content for failed addresses"""
+        found = set()
+        
+        if not text_content:
+            return found
+        
+        # Patterns to match in bounce messages
+        patterns = [
+            r'failed:\s*\n\n\[([^\]]+)\]',  # [address] after "failed:"
+            r'RCPT TO\s*[<:]+([^\s>:]+)',   # RCPT TO:<address>
+            r'Original-Recipient:\s*rfc822;\s*([^\s]+)',  # Original-Recipient
+            r'Final-Recipient:\s*rfc822;\s*([^\s]+)',     # Final-Recipient
+            r'To:\s*([^\s<]+@[^\s>]+)',                  # To: address
+            r'<([^>]+@[^>]+)>'                           # <address>
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text_content, re.IGNORECASE)
+            for addr in matches:
+                clean_addr = addr.strip('<>:').lower()
+                if '@' in clean_addr and not any(x in clean_addr for x in ['mailer-daemon', 'postmaster']):
+                    found.add(clean_addr)
+        
+        return found
+
+    def _display_results(self, rejected_emails, parent):
+        """Display results in the text area"""
+        self.result_text.config(state=tk.NORMAL)
+        self.result_text.delete(1.0, tk.END)
+        
+        if rejected_emails:
+            self.result_text.insert(tk.END, f"Found {len(rejected_emails)} rejected addresses:\n\n")
+            for email in sorted(rejected_emails):
+                self.result_text.insert(tk.END, f"{email}\n")
+            
+            # Add button to save results
+            save_btn = ttk.Button(parent, text="Save to Excel", 
+                                command=lambda: self._save_results_to_excel(rejected_emails))
+            save_btn.pack(pady=10)
+        else:
+            self.result_text.insert(tk.END, "No rejected addresses found in the messages")
+        
+        self.result_text.config(state=tk.DISABLED)
+
+    def _save_results_to_excel(self, rejected_emails):
+        """Save found addresses to Excel file"""
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            title="Save Rejected Addresses"
+        )
+        if filename:
+            df = pd.DataFrame(sorted(rejected_emails), columns=["Rejected Emails"])
+            df.to_excel(filename, index=False)
+            messagebox.showinfo("Success", f"Saved {len(rejected_emails)} addresses to {filename}")
+
+def load_contacts(file_path):
+    """Load and validate contacts with logging"""
+    try:
+        df = pd.read_excel(file_path)
+        df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
+        valid_contacts = df[df['Email Contacto'].str.contains('@', na=False)]
+        invalid_count = len(df) - len(valid_contacts)
+        
+        if invalid_count > 0:
+            logging.warning(f"Filtered out {invalid_count} invalid contacts")
+        
+        return valid_contacts.to_dict('records')
+    except Exception as e:
+        logging.error(f"Error loading contacts: {str(e)}")
+        raise
+
+def send_email(sender_email, sender_name, recipient_email, recipient_name, 
+               subject, html_content, smtp_server, smtp_port, password):
+    """Send email with detailed error reporting"""
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = formataddr((sender_name, sender_email))
+        msg['To'] = recipient_email
+        msg.attach(MIMEText(html_content, 'html'))
+
+        context = ssl.create_default_context()
+        
+        # SMTP connection with timeout
+        with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=10, context=context) as server:
+            server.login(sender_email, password)
+            server.send_message(msg)
+        
+        return True, None
+        
+    except smtplib.SMTPAuthenticationError as e:
+        return False, f"SMTP Authentication Failed: {e.smtp_error.decode()}"
+    except smtplib.SMTPConnectError as e:
+        return False, f"SMTP Connection Failed: {e.smtp_error.decode()}"
+    except smtplib.SMTPSenderRefused as e:
+        return False, f"Sender address rejected: {e.smtp_error.decode()}"
+    except smtplib.SMTPRecipientsRefused as e:
+        return False, f"Recipient address rejected: {e.recipients}"
+    except smtplib.SMTPException as e:
+        return False, f"SMTP Error: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected Error: {str(e)}"
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = EmailCampaignApp(root)
+    root.mainloop()

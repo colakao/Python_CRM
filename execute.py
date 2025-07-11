@@ -25,6 +25,8 @@ class EmailCampaignApp:
         self.root.geometry("1200x800")
         
         self.gmail_mode = tk.BooleanVar(value=False)
+        self.previous_smtp_server = ""  # Add this line to store previous SMTP server
+        self.previous_smtp_port = ""    # Add this line to store previous SMTP port
 
         # Setup logging
         self.setup_logging()
@@ -151,8 +153,14 @@ class EmailCampaignApp:
         self.pass_entry = ttk.Entry(sender_frame, show="*")
         self.pass_entry.grid(row=2, column=1, sticky="we", padx=5, columnspan=2)
 
-        self.app_pass_label = ttk.Label(sender_frame, text="App Passowrd:")
+        self.app_pass_label = ttk.Label(sender_frame, text="App Password:")
         self.app_pass_entry = ttk.Entry(sender_frame, show="*")
+
+        # Row 4 - Email Subject (new field)
+        ttk.Label(sender_frame, text="Email Subject:").grid(row=4, column=0, sticky="w", padx=5)
+        self.subject_entry = ttk.Entry(sender_frame)
+        self.subject_entry.grid(row=4, column=1, sticky="we", padx=5, columnspan=2)
+        self.subject_entry.insert(0, "About our services")  # Default subject
         
         # SMTP Configuration Section
         smtp_frame = ttk.LabelFrame(config_frame, text="3. Server Configuration", padding="5")
@@ -216,45 +224,65 @@ class EmailCampaignApp:
         notebook = ttk.Notebook(main_frame)
         notebook.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
         
+        # Configure notebook to expand properly
+        main_frame.rowconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=1)
+        
         # Data Table Tab
         table_frame = ttk.Frame(notebook)
         notebook.add(table_frame, text="Contact List")
         
-        self.tree = ttk.Treeview(table_frame)
-        self.tree.pack(fill=tk.BOTH, expand=True)
+        # Configure table frame grid
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
         
-        # Scrollbars
+        # Treeview with improved resizing
+        self.tree = ttk.Treeview(table_frame)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        
+        # Scrollbars - now properly attached to grid
         ysb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        ysb.grid(row=0, column=1, sticky="ns")
         xsb = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
+        xsb.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscroll=ysb.set, xscroll=xsb.set)
-        ysb.pack(side=tk.RIGHT, fill=tk.Y)
-        xsb.pack(side=tk.BOTTOM, fill=tk.X)
         
         # Log Tab
         log_frame = ttk.Frame(notebook)
         notebook.add(log_frame, text="Activity Log")
         
+        # Configure log frame grid
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        
+        # ScrolledText with proper expansion
         self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD)
-        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
         self.log_text.config(state=tk.DISABLED)
         
         # Status bar
         self.status = ttk.Label(main_frame, text="Ready", relief=tk.SUNKEN)
         self.status.grid(row=1, column=0, columnspan=2, sticky="ew")
         
-        # Configure grid weights
+        # Configure grid weights for main container
         main_frame.columnconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=3)
-        main_frame.rowconfigure(0, weight=1)
-        config_frame.columnconfigure(1, weight=1)
+        main_frame.columnconfigure(1, weight=3)  # Give more space to the notebook
+        main_frame.rowconfigure(0, weight=1)  # Allow vertical expansion
 
     def toggle_gmail_mode(self):
         if self.gmail_mode.get():
+            # Save current SMTP settings before switching to Gmail mode
+            self.previous_smtp_server = self.smtp_entry.get()
+            self.previous_smtp_port = self.port_entry.get()
+            
             # Show App Password field, hide regular password
             self.app_pass_label.grid(row=3, column=0, sticky="w", padx=5)
             self.app_pass_entry.grid(row=3, column=1, sticky="we", padx=5, columnspan=2)
             self.pass_entry.grid_remove()
-            
+            self.gmail_help_btn.grid() # Button Visible
+
+            self.subject_entry.grid(row=5, column=1, sticky="we", padx=5, columnspan=2)
+            self.sender_frame.grid_rowconfigure(5, weight=1)
             # Set Gmail defaults
             self.smtp_entry.delete(0, tk.END)
             self.smtp_entry.insert(0, "smtp.gmail.com")
@@ -265,6 +293,15 @@ class EmailCampaignApp:
             self.pass_entry.grid()
             self.app_pass_label.grid_remove()
             self.app_pass_entry.grid_remove()
+            self.gmail_help_btn.grid_remove() # Button Invisible
+            self.subject_entry.grid(row=4, column=1, sticky="we", padx=5, columnspan=2)
+            
+            # Restore previous SMTP settings
+            if self.previous_smtp_server:  # Only restore if we have a saved value
+                self.smtp_entry.delete(0, tk.END)
+                self.smtp_entry.insert(0, self.previous_smtp_server)
+                self.port_entry.delete(0, tk.END)
+                self.port_entry.insert(0, self.previous_smtp_port)
 
     def show_gmail_help(self):
         """Show Gmail configuration help"""
@@ -290,9 +327,11 @@ class EmailCampaignApp:
 
     def browse_excel_file(self):
         """Browse for Excel file and store absolute path"""
+        initial_dir = os.path.dirname(self.excel_entry.get()) if self.excel_entry.get() else os.getcwd()
         filename = filedialog.askopenfilename(
             title="Select Excel File",
-            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
+            initialdir=initial_dir
         )
         if filename:
             abs_path = os.path.abspath(filename)
@@ -302,9 +341,11 @@ class EmailCampaignApp:
 
     def browse_html_file(self):
         """Browse for HTML template and store absolute path"""
+        initial_dir = os.path.dirname(self.html_entry.get()) if self.html_entry.get() else os.getcwd()
         filename = filedialog.askopenfilename(
             title="Select HTML Template",
-            filetypes=[("HTML files", "*.html"), ("All files", "*.*")]
+            filetypes=[("HTML files", "*.html"), ("All files", "*.*")],
+            initialdir=initial_dir
         )
         if filename:
             abs_path = os.path.abspath(filename)
@@ -459,7 +500,12 @@ class EmailCampaignApp:
         progress_log = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD)
         progress_log.pack(fill=tk.BOTH, expand=True)
         
+        with open(self.config['html_template'], 'r', encoding = 'utf-8') as f:
+            html_template = f.read()
+        
         for i, contact in enumerate(contacts, 1):
+
+            personalized_html = html_template.replace('{{name}}', contact['Nombre Contacto']).replace('{{company}}', contact.get('Nombre Empresa', '')).replace('{{sender_name}}', self.config['sender_name'])
             # Update UI
             progress_bar['value'] = i
             status_label.config(text=f"{i}/{total} sent")
@@ -480,8 +526,10 @@ class EmailCampaignApp:
                 result, error_detail = self.send_email(
                     self.config['sender_email'], self.config['sender_name'],
                     recipient, contact['Nombre Contacto'],
-                    subject, html_template,
-                    self.config['smtp_server'], int(self.config['smtp_port'])
+                    self.subject_entry.get(), 
+                    personalized_html,
+                    self.config['smtp_server'], 
+                    int(self.config['smtp_port'])
                 )
                 
                 if result:
@@ -603,6 +651,8 @@ class EmailCampaignApp:
                 "sender_name": self.sender_name_entry.get(),
                 "smtp_server": self.smtp_entry.get(),
                 "smtp_port": self.port_entry.get(),
+                "previous_smtp_server": self.previous_smtp_server,  # Add this line
+                "previous_smtp_port": self.previous_smtp_port, 
                 "is_gmail": self.gmail_mode.get(),
                 "last_excel": self._get_absolute_path(self.excel_entry.get()),
                 "last_html": self._get_absolute_path(self.html_entry.get())
@@ -633,6 +683,10 @@ class EmailCampaignApp:
                     return
                     
             config_data = self._decode_config(encoded)
+            
+            # Load previous SMTP settings
+            self.previous_smtp_server = config_data.get("previous_smtp_server", "")
+            self.previous_smtp_port = config_data.get("previous_smtp_port", "")
             
             # Only populate fields if they're empty
             if not self.email_entry.get():

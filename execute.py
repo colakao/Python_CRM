@@ -647,11 +647,11 @@ class EmailCampaignApp:
             config_data = {
                 "email": self.email_entry.get(),
                 "password": self.pass_entry.get(),
-                "app_password": self.app_pass_entry.get() if self.gmail_mode.get() else "",
+                "app_password": self.app_pass_entry.get(),  # Always include app password
                 "sender_name": self.sender_name_entry.get(),
                 "smtp_server": self.smtp_entry.get(),
                 "smtp_port": self.port_entry.get(),
-                "previous_smtp_server": self.previous_smtp_server,  # Add this line
+                "previous_smtp_server": self.previous_smtp_server,
                 "previous_smtp_port": self.previous_smtp_port, 
                 "is_gmail": self.gmail_mode.get(),
                 "last_excel": self._get_absolute_path(self.excel_entry.get()),
@@ -695,10 +695,15 @@ class EmailCampaignApp:
             if not self.pass_entry.get():
                 self.pass_entry.delete(0, tk.END)
                 self.pass_entry.insert(0, config_data.get("password", ""))
+            
+            # Handle Gmail mode and app password
             if config_data.get("is_gmail", False):
                 self.gmail_mode.set(True)
                 self.toggle_gmail_mode()
-                self.app_pass_entry.insert(0, config_data.get("app_password", ""))
+                if not self.app_pass_entry.get():  # Only set if empty
+                    self.app_pass_entry.delete(0, tk.END)
+                    self.app_pass_entry.insert(0, config_data.get("app_password", ""))
+            
             if not self.smtp_entry.get():
                 self.smtp_entry.delete(0, tk.END)
                 self.smtp_entry.insert(0, config_data.get("smtp_server", ""))
